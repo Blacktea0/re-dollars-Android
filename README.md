@@ -4,7 +4,7 @@ Native Android client for [Bangumi Dollars](https://bgm.tv/dollars), the realtim
 [Bangumi](https://bgm.tv). Kotlin + Jetpack Compose + Material 3.
 
 Reading and realtime updates go through the [re-dollars-backend](../re-dollars-backend) service;
-posting goes directly to Bangumi using your logged-in session, the same way the
+posting goes directly to Bangumi over native HTTP using your logged-in session, as the
 [re-dollars-preact](../re-dollars-preact) userscript does. See
 [ANDROID_APP_SPEC.md](../ANDROID_APP_SPEC.md) for the full technical spec this app was built from.
 
@@ -47,10 +47,22 @@ posting goes directly to Bangumi using your logged-in session, the same way the
 
 ## Authentication
 
-There's no separate account system — login happens inside an in-app WebView against Bangumi
-itself (`bgm.tv`), and posting reuses that browser session (cookies + `formhash`). A second,
-one-time login via [rymk-auth](https://auth.ry.mk) obtains a backend JWT, needed for reactions,
-edit/delete, read state, uploads, and push registration. See §3 of the spec for details.
+Login opens an on-demand WebView against Bangumi (`bgm.tv`). On successful login,
+website cookies, the browser User-Agent and user identity are saved using the existing
+credential preferences. Normal cold startup restores identity from storage and validates
+the backend token over HTTP; it does not initialize WebView. Posting uses OkHttp with the
+saved Bangumi cookies, while reading and realtime updates use REST/WebSocket.
+
+The one-time [rymk-auth](https://auth.ry.mk) authorization provides a separate backend
+credential for backend operations. This token does not replace the Bangumi website cookie.
+The login WebView is destroyed when the login overlay closes.
+
+Upgrading from the older WebView-posting version requires opening login once to capture
+the website credentials into native storage. HTTP 200 alone is not accepted as a sent
+message: the response must contain `status: "ok"`. Failures retain the draft, and ambiguous
+network failures are never automatically retried. HTML/challenge responses reopen the
+interactive login flow. Native posting still needs verification with a real logged-in account.
+
 
 
 ## Certificate pinning

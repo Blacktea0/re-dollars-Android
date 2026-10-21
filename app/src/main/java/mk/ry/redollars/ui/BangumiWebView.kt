@@ -159,20 +159,6 @@ private fun parseAuthMessage(raw: String): AuthMessage? {
     )
 }
 
-/** Bridge so the in-page fetch() can report its async result back to Kotlin. JavaScript
- * interface methods are not guaranteed to run on the WebView UI thread, so even the
- * origin check is posted before touching WebView state. */
-private class PostBridge(private val view: WebView, private val cb: (String) -> Unit) {
-    @JavascriptInterface
-    fun deliver(json: String) {
-        view.post {
-            val uri = parseUrl(view.url) ?: return@post
-            if (!isBangumiOrigin(uri)) return@post
-            cb(json)
-        }
-    }
-}
-
 /** Bridge for the rymk-auth flow. [onMessage] receives the postMessage payload from the
  * opener shim; [onDiag] surfaces the shim's own trace into the debug log. Both callbacks,
  * plus the WebView URL check, are marshalled to the UI thread here. */
@@ -199,20 +185,15 @@ private class AuthBridge(
     }
 }
 
-/**
- * Single persistent Bangumi WebView. Full-screen while [visible] (login / rymk-auth);
- * otherwise kept alive off-screen so messages can be POSTed *same-origin* from the real
- * logged-in session (see MainActivity.buildPostJs). This mirrors the userscript, whose
- * fetch to `/dollars?ajax=1` succeeds precisely because it runs on the Bangumi origin.
- */
+/** Interactive Bangumi/rymk login only; disposed when the overlay closes. */
 @SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @Composable
 fun BangumiWebView(
     visible: Boolean,
     onCreated: (WebView) -> Unit,
     onResult: (SessionInfo) -> Unit,
+    onCookies: (String, String) -> Unit,
     onLog: (String) -> Unit,
-    onPostResult: (String) -> Unit,
     onAuthToken: (String, String?) -> Unit = { _, _ -> },
     onIgnoreList: (List<String>) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -232,7 +213,6 @@ fun BangumiWebView(
                 settings.allowFileAccessFromFileURLs = false
                 settings.allowUniversalAccessFromFileURLs = false
                 settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                addJavascriptInterface(PostBridge(this, onPostResult), "AndroidPost")
                 addJavascriptInterface(
                     AuthBridge(
                         view = this,
@@ -340,7 +320,10 @@ fun BangumiWebView(
                             // doesn't need it), so we complete as soon as we know the uid.
                             val uid = parsed.uid ?: return@evaluateJavascript
                             done = true
-                            CookieManager.getInstance().flush()
+                            CookieManager.getInstance().apply {
+                                onCookies(getCookie(Config.BGM_HOST).orEmpty(), view.settings.userAgentString)
+                                flush()
+                            }
                             val fhNote = parsed.formhash?.let { ", formhash=${it.take(8)}…" } ?: ""
                             onLog("Logged in: uid=$uid$fhNote")
                             onResult(SessionInfo(uid, parsed.name ?: uid.toString(), parsed.formhash ?: ""))
